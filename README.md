@@ -2,7 +2,7 @@
 
 A lightweight Pac‑Man clone written in C using SDL2 and SDL_ttf, featuring classic scatter/chase ghost behavior, frightened mode, and a clean pause overlay with text.
 
-![Gameplay Screenshot]('assets/Screenshot 2025-10-21 at 8.51.57 PM.png')
+![Gameplay Screenshot'assets/images']
 
 ## Features
 - Classic ghost schedule: global scatter ↔ chase cycles for all four ghosts, with frightened mode on power pellets.
