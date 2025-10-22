@@ -1,9 +1,10 @@
 // pacman2.c — Pac-Man with classic scatter/chase schedule, ESC pause menu, SDL_ttf text,
-// and a main menu (Play, Level 2 [Locked], Controls, Credits, Quit).
-// Build: clang pacman2.c $(pkg-config --cflags --libs sdl2 sdl2_ttf) -o pacman2
+// main menu (Play, Level 2 [Locked], Controls, Credits, Quit), and SDL_mixer music/SFX.
+// Build: clang pacman2.c $(pkg-config --cflags --libs sdl2 sdl2_ttf sdl2_mixer) -o pacman2
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_mixer.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <time.h>
@@ -29,6 +30,69 @@ typedef enum { STATE_MAIN_MENU, STATE_CONTROLS, STATE_CREDITS, STATE_PLAYING } G
 typedef struct { int x,y; int dx,dy; int startx,starty; } Entity;
 typedef struct { Entity e; GhostMode mode; Uint32 fright_timer; } Ghost;
 
+// ===== Audio state =====
+typedef enum { MS_NONE, MS_MENU, MS_GAME, MS_PAUSE, MS_VICTORY } MusicState;
+static MusicState mus_state = MS_NONE;
+
+static Mix_Music* mus_menu = NULL;     // Juhani Junkala — "Title Screen"
+static Mix_Music* mus_game = NULL;     // FREE Action Chiptune Music Pack (choose one)
+static Mix_Music* mus_pause = NULL;    // JRPG Pack 4 Calm — "Innocence"
+static Mix_Music* mus_victory = NULL;  // Juhani Junkala — "Ending"
+static Mix_Chunk* sfx_death = NULL;    // Short blip
+
+static void audio_play(Mix_Music* m, int loops){
+    if(!m) return;
+    Mix_HaltMusic();
+    Mix_PlayMusic(m, loops);
+}
+static void play_menu_music(void){ if(mus_state!=MS_MENU){ audio_play(mus_menu, -1); mus_state=MS_MENU; } }
+static void play_game_music(void){ if(mus_state!=MS_GAME){ audio_play(mus_game, -1); mus_state=MS_GAME; } }
+static void play_pause_music(void){ if(mus_state!=MS_PAUSE){ audio_play(mus_pause, -1); mus_state=MS_PAUSE; } }
+static void play_victory_music(void){ if(mus_state!=MS_VICTORY){ audio_play(mus_victory, -1); mus_state=MS_VICTORY; } }
+static void audio_stop(void){ Mix_HaltMusic(); mus_state = MS_NONE; }
+
+// Asset paths (place files under assets/audio/)
+#define PATH_MENU    "assets/audio/menu_title.wav"
+#define PATH_GAME    "assets/audio/gameplay_action.wav"   // pick one: e.g., "leaving home"
+#define PATH_PAUSE   "assets/audio/pause_innocence.ogg"
+#define PATH_VICTORY "assets/audio/victory_ending.wav"
+#define PATH_DEATH   "assets/audio/sfx_death.ogg"
+
+static bool audio_init(void){
+    if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 1024) != 0){
+        SDL_Log("Mix_OpenAudio failed: %s", Mix_GetError());
+        return false;
+    }
+    Mix_AllocateChannels(16);
+
+    mus_menu   = Mix_LoadMUS(PATH_MENU);
+    mus_game   = Mix_LoadMUS(PATH_GAME);
+    mus_pause  = Mix_LoadMUS(PATH_PAUSE);
+    mus_victory= Mix_LoadMUS(PATH_VICTORY);
+    sfx_death  = Mix_LoadWAV(PATH_DEATH);
+
+    if(!mus_menu)   SDL_Log("Load music (menu) failed: %s", Mix_GetError());
+    if(!mus_game)   SDL_Log("Load music (game) failed: %s", Mix_GetError());
+    if(!mus_pause)  SDL_Log("Load music (pause) failed: %s", Mix_GetError());
+    if(!mus_victory)SDL_Log("Load music (victory) failed: %s", Mix_GetError());
+    if(!sfx_death)  SDL_Log("Load sfx (death) failed: %s", Mix_GetError());
+
+    // Start on menu track by default
+    if(mus_menu) play_menu_music();
+    return true;
+}
+
+static void audio_quit(void){
+    audio_stop();
+    if(mus_menu){ Mix_FreeMusic(mus_menu); mus_menu=NULL; }
+    if(mus_game){ Mix_FreeMusic(mus_game); mus_game=NULL; }
+    if(mus_pause){ Mix_FreeMusic(mus_pause); mus_pause=NULL; }
+    if(mus_victory){ Mix_FreeMusic(mus_victory); mus_victory=NULL; }
+    if(sfx_death){ Mix_FreeChunk(sfx_death); sfx_death=NULL; }
+    Mix_CloseAudio();
+}
+
+// ===== Level map =====
 static const char* LEVEL0[MAP_H] = {
     "############################",
     "#............##............#",
@@ -207,7 +271,7 @@ static void render_esc_menu(SDL_Renderer* r, TTF_Font* font){
         SDL_Color col = (i==esc_sel)? (SDL_Color){255,215,0,255} : (SDL_Color){255,255,255,255};
         draw_text(r, font, items[i], px + 110, py + 70 + i*40, col);
     }
-    draw_text(r, font, "made by pradnesh", px + 80, py + panel_h - 40, (SDL_Color){180,180,180,255});
+    draw_text(r, font, "made by pradnesh", px + 80, py + panel_h - 40, (SDL_Color){255,215,0,255});
     SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
 }
 
@@ -281,22 +345,27 @@ static void render_credits_screen(SDL_Renderer* r, TTF_Font* font){
     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
     SDL_RenderClear(r);
 
+    // Make "Made by pradnesh" pop
     draw_text_center(r, font, "Credits", SCREEN_W/2, 60, (SDL_Color){255,255,255,255});
-    int y = 130;
-    draw_text_center(r, font, "Pac-Man (C + SDL2)", SCREEN_W/2, y, (SDL_Color){255,255,0,255});
-    y += 32;
-    draw_text_center(r, font, "Made by pradnesh", SCREEN_W/2, y, (SDL_Color){200,200,200,255});
-    y += 32;
-    draw_text_center(r, font, "Libraries: SDL2, SDL_ttf", SCREEN_W/2, y, (SDL_Color){200,200,200,255});
-    y += 32;
-    draw_text_center(r, font, "Classic scatter/chase schedule implemented", SCREEN_W/2, y, (SDL_Color){200,200,200,255});
-    y += 60;
+    int y = 110;
+    draw_text_center(r, font, "Made by pradnesh", SCREEN_W/2, y, (SDL_Color){255,215,0,255}); y += 36;
+
+    draw_text_center(r, font, "Libraries: SDL2, SDL_ttf, SDL_mixer", SCREEN_W/2, y, (SDL_Color){200,200,200,255}); y += 30;
+    draw_text_center(r, font, "Classic scatter/chase schedule implemented", SCREEN_W/2, y, (SDL_Color){200,200,200,255}); y += 40;
+
+    // Music credits
+    draw_text_center(r, font, "Music Credits", SCREEN_W/2, y, (SDL_Color){255,255,255,255}); y += 30;
+    draw_text_center(r, font, "Menu: \"Title Screen\" — Juhani Junkala (Retro Game Music Pack)", SCREEN_W/2, y, (SDL_Color){200,200,200,255}); y += 24;
+    draw_text_center(r, font, "Gameplay: FREE Action Chiptune Music Pack — credit: PPEAK / Preston Peak (CC BY 4.0)", SCREEN_W/2, y, (SDL_Color){200,200,200,255}); y += 24;
+    draw_text_center(r, font, "Pause: \"Innocence\" — Juhani Junkala (JRPG Pack 4 Calm)", SCREEN_W/2, y, (SDL_Color){200,200,200,255}); y += 24;
+    draw_text_center(r, font, "Victory: \"Ending\" — Juhani Junkala (Retro Game Music Pack)", SCREEN_W/2, y, (SDL_Color){200,200,200,255}); y += 40;
+
     draw_text_center(r, font, "Press ESC to go back", SCREEN_W/2, y, (SDL_Color){255,215,0,255});
 
     SDL_RenderPresent(r);
 }
 
-// ===== Game rendering (unchanged) =====
+// ===== Game rendering (unchanged visuals) =====
 static void render_game(SDL_Renderer*r, Entity pac, Ghost ghosts[4], int score, int lives, bool game_won, bool over, bool paused, TTF_Font* font){
     SDL_SetRenderDrawColor(r,0,0,0,255); SDL_RenderClear(r);
     for(int y=0;y<MAP_H;y++) for(int x=0;x<MAP_W;x++){
@@ -405,16 +474,20 @@ static int count_pellets(void){
 
 // Now implemented: switch to main menu scene
 static void go_to_main_menu(void){
-    // In a fuller game, would also unload level resources or show a separate scene.
     g_state = STATE_MAIN_MENU;
     esc_menu = false;
+    // Ensure menu music is playing
+    play_menu_music();
 }
 
 // ===== main =====
 int main(int argc, char** argv){
     (void)argc; (void)argv; srand((unsigned int)time(NULL));
-    if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER)!=0){ SDL_Log("SDL_Init failed: %s", SDL_GetError()); return 1; }
+    if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER|SDL_INIT_AUDIO)!=0){ SDL_Log("SDL_Init failed: %s", SDL_GetError()); return 1; }
     if(TTF_Init()!=0){ SDL_Log("TTF_Init failed: %s", TTF_GetError()); SDL_Quit(); return 1; }
+
+    // Audio
+    audio_init();
 
     TTF_Font* font = TTF_OpenFont("assets/DejaVuSans.ttf", 22);
     if(!font){ SDL_Log("TTF_OpenFont failed: %s", TTF_GetError()); }
@@ -427,6 +500,7 @@ int main(int argc, char** argv){
 
     // Start on main menu instead of gameplay
     g_state = STATE_MAIN_MENU;
+    play_menu_music();
 
     // Prepare gameplay state (will be reset on Play)
     reset_board();
@@ -459,6 +533,8 @@ int main(int argc, char** argv){
                             game_won=false; over=false; paused=false; eat_streak=0;
                             last_step=last_ghost=SDL_GetTicks();
                             g_state = STATE_PLAYING;
+                            // Switch to gameplay music
+                            play_game_music();
                         }else if(main_sel==1){
                             // Locked level
                             locked_msg_until = SDL_GetTicks() + 1500;
@@ -474,6 +550,8 @@ int main(int argc, char** argv){
                 }else if(g_state == STATE_CONTROLS || g_state == STATE_CREDITS){
                     if(k==SDLK_ESCAPE || k==SDLK_BACKSPACE || k==SDLK_RETURN || k==SDLK_SPACE){
                         g_state = STATE_MAIN_MENU;
+                        // Ensure menu music
+                        play_menu_music();
                         continue;
                     }
                 }else if(g_state == STATE_PLAYING){
@@ -484,10 +562,14 @@ int main(int argc, char** argv){
                         if(esc_menu){
                             esc_menu=false;
                             paused = (game_won || over);
+                            // Resume correct track
+                            if(!paused && !game_won && !over) play_game_music();
                         }else if(!over && !game_won){
                             esc_menu=true;
                             paused=true;
                             esc_sel = 0;
+                            // Switch to pause music
+                            play_pause_music();
                         }
                         continue;
                     }
@@ -500,6 +582,8 @@ int main(int argc, char** argv){
                             lives=3; score=0; pellets=count_pellets();
                             game_won=false; over=false; paused=false; eat_streak=0;
                             last_step=last_ghost=SDL_GetTicks();
+                            // Back to gameplay music
+                            play_game_music();
                         }
                         continue;
                     }
@@ -512,6 +596,7 @@ int main(int argc, char** argv){
                             if(esc_sel==0){
                                 // Resume
                                 esc_menu=false; paused=false;
+                                play_game_music();
                             }else if(esc_sel==1){
                                 // Retry
                                 reset_board();
@@ -520,11 +605,12 @@ int main(int argc, char** argv){
                                 game_won=false; over=false; paused=false; eat_streak=0;
                                 last_step=last_ghost=SDL_GetTicks();
                                 esc_menu=false;
+                                play_game_music();
                             }else if(esc_sel==2){
                                 // Main Menu
                                 go_to_main_menu();
-                                // Reset minimal gameplay flags so returning later is clean
                                 paused=false;
+                                play_menu_music();
                             }
                         }else if(k=='r'){
                             // quick retry shortcut in menu
@@ -534,8 +620,8 @@ int main(int argc, char** argv){
                             game_won=false; over=false; paused=false; eat_streak=0;
                             last_step=last_ghost=SDL_GetTicks();
                             esc_menu=false;
+                            play_game_music();
                         }
-                        // Do not process gameplay input while menu is open
                         continue;
                     }
 
@@ -565,7 +651,10 @@ int main(int argc, char** argv){
                     char c = in_bounds(pac.x,pac.y)? board[pac.y][pac.x] : ' ';
                     if(c=='.'){ board[pac.y][pac.x]=' '; score+=10; pellets--; eat_streak=0; }
                     else if(c=='o'){ board[pac.y][pac.x]=' '; score+=50; pellets--; eat_streak=0; set_frightened(ghosts); }
-                    if(pellets<=0){ game_won=true; paused=true; }
+                    if(pellets<=0){
+                        game_won=true; paused=true;
+                        play_victory_music();
+                    }
                 }
             }
 
@@ -621,7 +710,13 @@ int main(int argc, char** argv){
                             ghosts[i].fright_timer=0;
                         }else{
                             lives--;
-                            if(lives<=0){ over=true; paused=true; }
+                            // Play death sfx
+                            if(sfx_death) Mix_PlayChannel(-1, sfx_death, 0);
+                            if(lives<=0){
+                                over=true; paused=true;
+                                // Optional: switch to pause music for end screen; keep victory only for wins
+                                play_pause_music();
+                            }
                             reset_positions(&pac, ghosts);
                             break;
                         }
@@ -631,6 +726,8 @@ int main(int argc, char** argv){
 
             render_game(ren, pac, ghosts, score, lives, game_won, over, paused, font);
         }else if(g_state == STATE_MAIN_MENU){
+            // Keep menu music rolling
+            if(mus_state!=MS_MENU) play_menu_music();
             render_main_menu(ren, font);
         }else if(g_state == STATE_CONTROLS){
             render_controls_screen(ren, font);
@@ -642,6 +739,7 @@ int main(int argc, char** argv){
     }
 
     if(font) TTF_CloseFont(font);
+    audio_quit();
     TTF_Quit();
     SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
     return 0;
