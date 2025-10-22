@@ -1,5 +1,4 @@
-// pacman2.c — Pac-Man with classic scatter/chase schedule for all ghosts,
-// deterministic steering, pause overlay, and SDL_ttf text.
+// pacman2.c — Pac-Man with classic scatter/chase schedule, ESC pause menu, and SDL_ttf text.
 // Build: clang pacman2.c $(pkg-config --cflags --libs sdl2 sdl2_ttf) -o pacman2
 
 #include <SDL2/SDL.h>
@@ -180,6 +179,27 @@ static void draw_rect(SDL_Renderer*r,int x,int y,int w,int h, SDL_Color c){
     SDL_Rect rc={x,y,w,h}; SDL_RenderFillRect(r,&rc);
 }
 
+// ===== ESC menu state =====
+static bool esc_menu = false;
+static int esc_sel = 0; // 0=Resume, 1=Retry, 2=Main Menu
+
+static void render_esc_menu(SDL_Renderer* r, TTF_Font* font){
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    int panel_w = 360, panel_h = 260;
+    int px = SCREEN_W/2 - panel_w/2;
+    int py = SCREEN_H/2 - panel_h/2;
+    draw_rect(r, px, py, panel_w, panel_h, (SDL_Color){0,0,0,180});
+
+    draw_text(r, font, "Paused", px + 130, py + 20, (SDL_Color){255,255,255,255});
+    const char* items[3] = { "Resume", "Retry", "Main Menu" };
+    for(int i=0;i<3;i++){
+        SDL_Color col = (i==esc_sel)? (SDL_Color){255,215,0,255} : (SDL_Color){255,255,255,255};
+        draw_text(r, font, items[i], px + 110, py + 70 + i*40, col);
+    }
+    draw_text(r, font, "made by pradnesh", px + 80, py + panel_h - 40, (SDL_Color){180,180,180,255});
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+}
+
 static void render(SDL_Renderer*r, Entity pac, Ghost ghosts[4], int score, int lives, bool game_won, bool over, bool paused, TTF_Font* font){
     SDL_SetRenderDrawColor(r,0,0,0,255); SDL_RenderClear(r);
     for(int y=0;y<MAP_H;y++) for(int x=0;x<MAP_W;x++){
@@ -198,12 +218,16 @@ static void render(SDL_Renderer*r, Entity pac, Ghost ghosts[4], int score, int l
     int barw=(score%2000)*SCREEN_W/2000; draw_rect(r,0,SCREEN_H-6,barw,6,(SDL_Color){50,200,50,255});
     for(int i=0;i<lives;i++) draw_rect(r,i*14,0,12,6,(SDL_Color){255,255,0,255});
 
-    if(paused){
+    // Priority: ESC menu overlay first (when active), otherwise end overlay when paused by win/over
+    if(esc_menu){
+        render_esc_menu(r, font);
+    }else if(paused && (game_won || over)){
         SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
         draw_rect(r, SCREEN_W/2-160, SCREEN_H/2-80, 320, 160, (SDL_Color){0,0,0,180});
         const char* title = game_won? "YOU WIN" : "GAME OVER";
         draw_text(r, font, title, SCREEN_W/2- (int)strlen(title)*8, SCREEN_H/2-50, (SDL_Color){255,255,255,255});
         draw_text(r, font, "Press Enter to retry", SCREEN_W/2-120, SCREEN_H/2+10, (SDL_Color){255,255,255,255});
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
     }
     SDL_RenderPresent(r);
 }
@@ -285,6 +309,11 @@ static int count_pellets(void){
     int c=0; for(int y=0;y<MAP_H;y++) for(int x=0;x<MAP_W;x++) if(board[y][x]=='.'||board[y][x]=='o') c++; return c;
 }
 
+// Placeholder hook for future main menu
+static void go_to_main_menu(void){
+    SDL_Log("Main Menu selected (TODO: implement main menu screen)"); // stub
+}
+
 int main(int argc, char** argv){
     (void)argc; (void)argv; srand((unsigned int)time(NULL));
     if(SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER)!=0){ SDL_Log("SDL_Init failed: %s", SDL_GetError()); return 1; }
@@ -314,22 +343,73 @@ int main(int argc, char** argv){
             if(e.type==SDL_QUIT) running=false;
             else if(e.type==SDL_KEYDOWN){
                 SDL_Keycode k=e.key.keysym.sym;
-                if(k==SDLK_ESCAPE) running=false;
-                if(paused){
+
+                // ESC toggles the pause menu unless the end screen is up
+                if(k==SDLK_ESCAPE){
+                    if(esc_menu){
+                        esc_menu=false;
+                        paused = (game_won || over);
+                    }else if(!over && !game_won){
+                        esc_menu=true;
+                        paused=true;
+                        esc_sel = 0;
+                    }
+                    continue;
+                }
+
+                // If end screen is up (game over/win), allow retry via Enter/Space/R
+                if(paused && (over || game_won) && !esc_menu){
                     if(k==SDLK_RETURN || k==SDLK_KP_ENTER || k==SDLK_SPACE || k=='r'){
                         reset_board();
                         place_starts(&pac, ghosts);
                         lives=3; score=0; pellets=count_pellets();
                         game_won=false; over=false; paused=false; eat_streak=0;
                         last_step=last_ghost=SDL_GetTicks();
-                        continue;
                     }
-                }else{
-                      if(k==SDLK_LEFT || k==SDLK_a){ pac.dx=-1; pac.dy=0; }
-                      else if(k==SDLK_DOWN || k==SDLK_s){ pac.dx=0; pac.dy=1; }
-                      else if(k==SDLK_UP || k==SDLK_w){ pac.dx=0; pac.dy=-1; }
-                      else if(k==SDLK_RIGHT || k==SDLK_d){ pac.dx=1; pac.dy=0; }
+                    continue;
+                }
+
+                // Handle navigation/selection when ESC menu is open
+                if(esc_menu){
+                    if(k==SDLK_UP || k==SDLK_w){ esc_sel = (esc_sel + 3 - 1)%3; }
+                    else if(k==SDLK_DOWN || k==SDLK_s){ esc_sel = (esc_sel + 1)%3; }
+                    else if(k==SDLK_RETURN || k==SDLK_KP_ENTER || k==SDLK_SPACE){
+                        if(esc_sel==0){
+                            // Resume
+                            esc_menu=false; paused=false;
+                        }else if(esc_sel==1){
+                            // Retry
+                            reset_board();
+                            place_starts(&pac, ghosts);
+                            lives=3; score=0; pellets=count_pellets();
+                            game_won=false; over=false; paused=false; eat_streak=0;
+                            last_step=last_ghost=SDL_GetTicks();
+                            esc_menu=false;
+                        }else if(esc_sel==2){
+                            // Main Menu (stub)
+                            go_to_main_menu();
+                            // Keep the menu open for now, ready to switch to main menu scene in the future
+                        }
+                    }else if(k=='r'){
+                        // quick retry shortcut in menu
+                        reset_board();
+                        place_starts(&pac, ghosts);
+                        lives=3; score=0; pellets=count_pellets();
+                        game_won=false; over=false; paused=false; eat_streak=0;
+                        last_step=last_ghost=SDL_GetTicks();
+                        esc_menu=false;
                     }
+                    // Do not process gameplay input while menu is open
+                    continue;
+                }
+
+                // Gameplay input (only when not paused by menu or end screen)
+                if(!paused){
+                    if(k==SDLK_LEFT || k==SDLK_a){ pac.dx=-1; pac.dy=0; }
+                    else if(k==SDLK_DOWN || k==SDLK_s){ pac.dx=0; pac.dy=1; }
+                    else if(k==SDLK_UP || k==SDLK_w){ pac.dx=0; pac.dy=-1; }
+                    else if(k==SDLK_RIGHT || k==SDLK_d){ pac.dx=1; pac.dy=0; }
+                }
             }
         }
 
