@@ -325,11 +325,11 @@ int main(int argc, char** argv){
                         continue;
                     }
                 }else{
-                    if(k==SDLK_LEFT){ pac.dx=-1; pac.dy=0; }
-                    else if(k==SDLK_RIGHT){ pac.dx=1; pac.dy=0; }
-                    else if(k==SDLK_UP){ pac.dx=0; pac.dy=-1; }
-                    else if(k==SDLK_DOWN){ pac.dx=0; pac.dy=1; }
-                }
+                      if(k==SDLK_LEFT || k==SDLK_a){ pac.dx=-1; pac.dy=0; }
+                      else if(k==SDLK_DOWN || k==SDLK_s){ pac.dx=0; pac.dy=1; }
+                      else if(k==SDLK_UP || k==SDLK_w){ pac.dx=0; pac.dy=-1; }
+                      else if(k==SDLK_RIGHT || k==SDLK_d){ pac.dx=1; pac.dy=0; }
+                    }
             }
         }
 
