@@ -1,0 +1,20 @@
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build outputs
+build/
+bin/
+obj/
+out/
+dist/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Your local game binary
+pacman2
