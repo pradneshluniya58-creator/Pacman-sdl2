@@ -53,7 +53,7 @@ static void audio_stop(void){ Mix_HaltMusic(); mus_state = MS_NONE; }
 
 // Asset paths (place files under assets/audio/)
 #define PATH_MENU    "assets/audio/menu_title.wav"
-#define PATH_GAME    "assets/audio/gameplay_action.wav"   // pick one: e.g., "leaving home"
+#define PATH_GAME    "assets/audio/gameplay_action.mp3"   // pick one: e.g., "leaving home"
 #define PATH_PAUSE   "assets/audio/pause_innocence.ogg"
 #define PATH_VICTORY "assets/audio/victory_ending.wav"
 #define PATH_DEATH   "assets/audio/sfx_death.ogg"
